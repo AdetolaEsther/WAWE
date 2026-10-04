@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import "./globals.css";
 import { Plus_Jakarta_Sans } from "next/font/google";
 
@@ -15,7 +15,12 @@ const geistMono = Plus_Jakarta_Sans({
 
 export const metadata: Metadata = {
   title: "What are we eating?",
-  description: "A mindful meal planning app that helps you eat better, without the stress.",
+  description: "A mindful meal planning/Whole food meal discovery app that helps you eat better, without the stress.",
+  manifest: "/manifest.json",
+
+};
+export const viewport: Viewport = {
+  themeColor: "#E25B34",
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
