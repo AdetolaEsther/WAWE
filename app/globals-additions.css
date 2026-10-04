@@ -1,0 +1,35 @@
+/*
+  Paste this into app/globals.css (Tailwind v4), below `@import "tailwindcss";`.
+
+  Tailwind v3? Put the same values under theme.extend.colors in tailwind.config
+  instead, using the names without the "--color-" prefix (brand, brand-strong, ink, ...).
+
+  Contrast notes (measured against white unless stated):
+    brand        #E25B34  3.63:1  -> decorative fills, large text only
+    brand-strong #C4461E  4.95:1  -> any button or text that carries white / small copy
+    ink          #2F1400  17.2:1  body + headings
+    ink-soft     #6F5143  ~6.8:1  secondary copy (replaces #CA7F41 at 3.17:1 and gray-400 at 2.54:1)
+*/
+@theme {
+  --color-brand: #e25b34;
+  --color-brand-strong: #c4461e;
+  --color-ink: #2f1400;
+  --color-ink-soft: #6f5143;
+  --color-cocoa: #601400;
+  --color-peach: #ffdcc4;
+  --color-cream: #fff3ec;
+  --color-mint: #cffaed;
+  --color-mint-soft: #c1ebdf;
+  --color-coral: #ff8b6a;
+  --color-sage: #52796f;
+  --color-line: #e8d8cf;
+  --color-chip: #f3f1ee;
+  --color-chip-hover: #eae6e1;
+  --color-panel: #f9f9f9;
+}
+
+/* One consistent keyboard focus style for links and buttons. */
+:focus-visible {
+  outline: 2px solid var(--color-ink);
+  outline-offset: 2px;
+}
