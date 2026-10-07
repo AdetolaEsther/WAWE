@@ -1,7 +1,7 @@
  'use client';
 import { Icon } from "@iconify/react";
-import { useState } from "react";
-import { appetiteOptions, categoryIcons, effortOptions, goalOptions, hungerOptions, initialIngredients, themeColors } from "./utils";
+import { useEffect, useState } from "react";
+import { appetiteOptions, categoryIcons, effortOptions, goalOptions, hungerOptions, initialIngredients, Meal, themeColors } from "./utils";
 
  type Category = keyof typeof initialIngredients;
 type PantryItem = { name: string; category: Category };
@@ -67,6 +67,8 @@ export default function Home() {
       [category]: "",
     }));
   };
+  const [isFindingMeals, setIsFindingMeals] = useState(false);
+  const [meals, setMeals] = useState<Meal[]>([]);
   const [showResults, setShowResults] = useState(false);
 const [isLoading, setIsLoading] = useState(false);
 
@@ -77,23 +79,50 @@ const isReadyToGenerate =
   goal &&
   selectedIngredients.length > 0;
 
-  const handleGenerateMeals = async () => {
-  if (!isReadyToGenerate) return;
+const handleGenerateMeals = async () => {
+  if (!isReadyToGenerate || isLoading) return;
 
   setIsLoading(true);
-  setShowResults(false);
 
-  await new Promise((resolve) => setTimeout(resolve, 1200));
-
-  setIsLoading(false);
-  setShowResults(true);
-
-  document
-    .getElementById("curated-results")
-    ?.scrollIntoView({
-      behavior: "smooth",
-      block: "start",
+  try {
+    const response = await fetch("/api/meals", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        appetite,
+        hunger,
+        effort,
+        goal,
+        ingredients: selectedIngredients,
+      }),
     });
+
+    if (!response.ok) {
+      throw new Error("Failed to generate meals");
+    }
+
+    const data = await response.json();
+
+    setMeals(data.meals);
+
+    // We'll use this to reveal the results section
+    setShowResults(true);
+
+    setTimeout(() => {
+      document
+        .getElementById("curated-results")
+        ?.scrollIntoView({
+          behavior: "smooth",
+          block: "start",
+        });
+    }, 100);
+  } catch (error) {
+    console.error("Meal generation failed:", error);
+  } finally {
+    setIsLoading(false);
+  }
 };
 
 
@@ -170,7 +199,16 @@ const categoryEmoji: Record<string, string> = {
   Extras: "🍯",
 };
 const emojiFor = (category: string) => categoryEmoji[category] ?? "🍽️";
+const loadingMessages = [
+  "Checking your kitchen...",
+  "Matching your cravings...",
+  "Putting your ingredients to work...",
+  "Building your plate...",
+  "Finding something delicious...",
+  "Almost there...",
+];
 
+const [loadingMessage, setLoadingMessage] = useState(loadingMessages[0]);
 const pantryQuery = pantrySearch.trim().toLowerCase();
 const stockedNames = new Set(pantryItems.map((i) => i.name.toLowerCase()));
 
@@ -187,6 +225,62 @@ const suggestions = (pantryTab === "All" ? pantryCategories : [pantryTab])
   )
   .slice(0, 12);
 
+  const handleFindMeals = async () => {
+  setIsFindingMeals(true);
+  setShowResults(false);
+
+  try {
+    const response = await fetch("/api/meals", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        appetite,
+        hunger,
+        effort,
+        goal,
+        ingredients: selectedIngredients,
+      }),
+    });
+
+    if (!response.ok) {
+      throw new Error("Failed to generate meals");
+    }
+
+    const data = await response.json();
+
+    setMeals(data.meals);
+    setShowResults(true);
+
+    setTimeout(() => {
+      document
+        .getElementById("curated-results")
+        ?.scrollIntoView({ behavior: "smooth" });
+    }, 100);
+  } catch (error) {
+    console.error(error);
+  } finally {
+    setIsFindingMeals(false);
+  }
+};
+const [selectedMeal, setSelectedMeal] = useState<Meal | null>(null);
+
+useEffect(() => {
+  if (!isLoading) {
+    setLoadingMessage(loadingMessages[0]);
+    return;
+  }
+
+  let index = 0;
+
+  const interval = setInterval(() => {
+    index = (index + 1) % loadingMessages.length;
+    setLoadingMessage(loadingMessages[index]);
+  }, 2200);
+
+  return () => clearInterval(interval);
+}, [isLoading]);
   return (
 
     <div className="min-h-screen">
@@ -881,7 +975,6 @@ const suggestions = (pantryTab === "All" ? pantryCategories : [pantryTab])
         )}
       </div>
 
-      {/* CTA */}
       <button
         type="button"
         disabled={!isReadyToGenerate || isLoading}
@@ -893,23 +986,22 @@ const suggestions = (pantryTab === "All" ? pantryCategories : [pantryTab])
         }`}
       >
         {isLoading ? (
-          <>
-            <Icon
-              icon="solar:refresh-linear"
-              className="animate-spin text-xl"
-            />
-            Finding your meals...
-          </>
-        ) : (
-          <>
-            <Icon
-              icon="solar:magic-stick-3-linear"
-              className="text-xl"
-            />
-
-            Show me what I can eat
-          </>
-        )}
+  <>
+    <Icon
+      icon="solar:refresh-linear"
+      className="animate-spin text-xl"
+    />
+    {loadingMessage}
+  </>
+) : (
+  <>
+    <Icon
+      icon="solar:magic-stick-3-linear"
+      className="text-xl"
+    />
+    Show me what I can eat
+  </>
+)}
       </button>
 
       {!isReadyToGenerate && (
@@ -924,266 +1016,109 @@ const suggestions = (pantryTab === "All" ? pantryCategories : [pantryTab])
     
 {showResults && (
 <>
-<section className="flex flex-col gap-8 px-6 pb-20 pt-12">
-  <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
-    <div className="flex flex-col gap-2">
-      <div className="flex w-fit items-center gap-2 rounded-full bg-[#CFFAED] px-3 py-1.5 text-xs font-bold uppercase tracking-wide text-[#52796F]">
-        <Icon
-          icon="material-symbols:check-circle"
-          className="text-base"
-        />
-        <span>3 matches found in your kitchen</span>
-      </div>
-      <h2 className="text-3xl font-bold tracking-tight text-[#2F1400]">
-        Okay… here’s what we’re working with.
+{showResults && (
+  <section
+    id="curated-results"
+    className="flex flex-col gap-8 px-6 pb-20 pt-12"
+  >
+    <div>
+      <p className="text-sm font-semibold uppercase tracking-widest text-[#E25B34]">
+        Your kitchen, your options
+      </p>
+
+      <h2 className="mt-2 text-3xl font-bold text-[#2F1400]">
+        Here’s what you can eat.
       </h2>
+
+      <p className="mt-2 text-sm text-gray-500">
+        Four ideas based on what you’re craving and what you already have.
+      </p>
     </div>
-    <p className="text-sm text-gray-500">
-      Prioritizing zero food waste & high satisfaction.
-    </p>
-  </div>
 
-  <div className="grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-3">
+    <div className="grid gap-6 md:grid-cols-2">
+  {meals.map((meal) => (
+    <article
+      key={meal.name}
+      className="overflow-hidden rounded-3xl border border-gray-100 bg-white shadow-sm"
+    >
+      {/* Meal Image */}
+      {meal.image && (
+        <div className="relative h-64 overflow-hidden">
+          <img
+            src={meal.image.url}
+            alt={meal.image.alt || meal.name}
+            className="h-full w-full object-cover"
+          />
 
-    <div className="group flex flex-col overflow-hidden rounded-2xl border border-gray-100 bg-white shadow-sm transition-all duration-300 hover:-translate-y-1 hover:shadow-lg">
-      {/* Image */}
-      <div className="relative aspect-[4/3] overflow-hidden">
-        <img
-          src="/loaded-breakfast-skillet.jpg"
-          alt="Loaded breakfast plate"
-          className="h-full w-full object-cover transition-transform duration-500 group-hover:scale-105"
-        />
-
-        <div className="absolute right-4 top-4 rounded-full bg-white/90 px-3 py-1.5 text-xs font-semibold text-[#E25B34] shadow-sm backdrop-blur">
-          🌟 Morning Anchor
-        </div>
-      </div>
-
-      {/* Content */}
-      <div className="flex flex-1 flex-col justify-between gap-6 p-6">
-        <div>
-          {/* Tags */}
-          <div className="mb-3 flex flex-wrap gap-1.5">
-            <span className="rounded-full bg-[#FFF3EC] px-2.5 py-1 text-xs font-semibold text-[#E25B34]">
-              High Protein
-            </span>
-
-            <span className="rounded-full bg-gray-100 px-2.5 py-1 text-xs text-gray-500">
-              20 min
-            </span>
-
-            <span className="rounded-full bg-gray-100 px-2.5 py-1 text-xs text-gray-500">
-              Easy
-            </span>
+          {/* Unsplash Attribution */}
+          <div className="absolute bottom-0 left-0 right-0 bg-black/40 px-4 py-2">
+            <p className="text-xs text-white">
+              Photo by{" "}
+              <a
+                href={meal.image.photographerUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="underline"
+              >
+                {meal.image.photographer}
+              </a>{" "}
+              on{" "}
+              <a
+                href={meal.image.unsplashUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="underline"
+              >
+                Unsplash
+              </a>
+            </p>
           </div>
+        </div>
+      )}
 
-          <h3 className="text-xl font-bold text-[#2F1400] transition-colors group-hover:text-[#E25B34]">
-            Loaded Breakfast Plate
-          </h3>
+      {/* Meal Content */}
+      <div className="p-6">
+        <div className="flex items-center justify-between">
+          <span className="rounded-full bg-[#FFF3EC] px-3 py-1 text-xs font-semibold text-[#E25B34]">
+            {meal.pantryMatch}% pantry match
+          </span>
 
-          <p className="mt-2 text-sm leading-relaxed text-gray-500">
-            Soft poached eggs over garlicky spinach, crispy roasted
-            sweet potato wedges, creamy avocado, and warm seeded
-            sourdough.
-          </p>
+          <span className="text-sm text-gray-400">
+            {meal.cookingTime}
+          </span>
         </div>
 
-        <div className="border-t border-gray-100 pt-4">
-          <div className="mb-4">
-            <div className="mb-2 flex items-center justify-between text-xs">
-              <span className="flex items-center gap-1 font-bold text-[#52796F]">
-                <Icon
-                  icon="material-symbols:task-alt"
-                  className="text-sm"
-                />
+        <h3 className="mt-5 text-xl font-bold text-[#2F1400]">
+          {meal.name}
+        </h3>
 
-                100% Pantry Match
-              </span>
+        <p className="mt-2 text-sm leading-6 text-gray-500">
+          {meal.description}
+        </p>
 
-              <span className="text-gray-400">
-                5 of 5 items ready
-              </span>
-            </div>
+        <div className="mt-5 flex flex-wrap gap-2">
+          <span className="rounded-full bg-gray-100 px-3 py-1.5 text-xs font-medium">
+            {meal.difficulty}
+          </span>
 
-            <div className="h-1.5 overflow-hidden rounded-full bg-gray-100">
-              <div className="h-full w-full rounded-full bg-[#52796F]" />
-            </div>
-          </div>
-
-          <button
-            type="button"
-            className="flex w-full items-center justify-center gap-2 rounded-full bg-[#E25B34] py-3 text-sm font-bold text-white transition hover:bg-[#601400]"
-          >
-            Make this
-
-            <Icon
-              icon="material-symbols:arrow-forward"
-              className="text-lg"
-            />
-          </button>
+          <span className="rounded-full bg-gray-100 px-3 py-1.5 text-xs font-medium">
+            {meal.cookingTime}
+          </span>
         </div>
+
+        <button
+          type="button"
+          onClick={() => setSelectedMeal(meal)}
+          className="mt-6 w-full rounded-full bg-[#872100] px-5 py-3 text-sm font-semibold text-white transition hover:bg-[#601400]"
+        >
+          Make this
+        </button>
       </div>
-    </div>
-    <div className="group flex flex-col overflow-hidden rounded-2xl border border-gray-100 bg-white shadow-sm transition-all duration-300 hover:-translate-y-1 hover:shadow-lg">
-      {/* Image */}
-      <div className="relative aspect-[4/3] overflow-hidden">
-        <img
-          src="/images.jpeg"
-          alt="Loaded breakfast plate"
-          className="h-full w-full object-cover transition-transform duration-500 group-hover:scale-105"
-        />
-
-        <div className="absolute right-4 top-4 rounded-full bg-white/90 px-3 py-1.5 text-xs font-semibold text-[#E25B34] shadow-sm backdrop-blur">
-          🌟 Morning Anchor
-        </div>
-      </div>
-
-      {/* Content */}
-      <div className="flex flex-1 flex-col justify-between gap-6 p-6">
-        <div>
-          {/* Tags */}
-          <div className="mb-3 flex flex-wrap gap-1.5">
-            <span className="rounded-full bg-[#FFF3EC] px-2.5 py-1 text-xs font-semibold text-[#E25B34]">
-              High Protein
-            </span>
-
-            <span className="rounded-full bg-gray-100 px-2.5 py-1 text-xs text-gray-500">
-              20 min
-            </span>
-
-            <span className="rounded-full bg-gray-100 px-2.5 py-1 text-xs text-gray-500">
-              Easy
-            </span>
-          </div>
-
-          <h3 className="text-xl font-bold text-[#2F1400] transition-colors group-hover:text-[#E25B34]">
-            Fried Eggs and Potatoes
-          </h3>
-
-          <p className="mt-2 text-sm leading-relaxed text-gray-500">
-            Soft poached eggs over garlicky spinach, crispy roasted
-            sweet potato wedges, creamy avocado, and warm seeded
-            sourdough.
-          </p>
-        </div>
-
-        <div className="border-t border-gray-100 pt-4">
-          <div className="mb-4">
-            <div className="mb-2 flex items-center justify-between text-xs">
-              <span className="flex items-center gap-1 font-bold text-[#52796F]">
-                <Icon
-                  icon="material-symbols:task-alt"
-                  className="text-sm"
-                />
-
-                100% Pantry Match
-              </span>
-
-              <span className="text-gray-400">
-                5 of 5 items ready
-              </span>
-            </div>
-
-            <div className="h-1.5 overflow-hidden rounded-full bg-gray-100">
-              <div className="h-full w-full rounded-full bg-[#52796F]" />
-            </div>
-          </div>
-
-          <button
-            type="button"
-            className="flex w-full items-center justify-center gap-2 rounded-full bg-[#E25B34] py-3 text-sm font-bold text-white transition hover:bg-[#601400]"
-          >
-            Make this
-
-            <Icon
-              icon="material-symbols:arrow-forward"
-              className="text-lg"
-            />
-          </button>
-        </div>
-      </div>
-    </div>
-    <div className="group flex flex-col overflow-hidden rounded-2xl border border-gray-100 bg-white shadow-sm transition-all duration-300 hover:-translate-y-1 hover:shadow-lg">
-      {/* Image */}
-      <div className="relative aspect-[4/3] overflow-hidden">
-        <img
-          src="/fried-eggs-and-potatoes.webp"
-          alt="Loaded breakfast plate"
-          className="h-full w-full object-cover transition-transform duration-500 group-hover:scale-105"
-        />
-
-        <div className="absolute right-4 top-4 rounded-full bg-white/90 px-3 py-1.5 text-xs font-semibold text-[#E25B34] shadow-sm backdrop-blur">
-          🌟 Morning Anchor
-        </div>
-      </div>
-
-      {/* Content */}
-      <div className="flex flex-1 flex-col justify-between gap-6 p-6">
-        <div>
-          {/* Tags */}
-          <div className="mb-3 flex flex-wrap gap-1.5">
-            <span className="rounded-full bg-[#FFF3EC] px-2.5 py-1 text-xs font-semibold text-[#E25B34]">
-              High Protein
-            </span>
-
-            <span className="rounded-full bg-gray-100 px-2.5 py-1 text-xs text-gray-500">
-              20 min
-            </span>
-
-            <span className="rounded-full bg-gray-100 px-2.5 py-1 text-xs text-gray-500">
-              Easy
-            </span>
-          </div>
-
-          <h3 className="text-xl font-bold text-[#2F1400] transition-colors group-hover:text-[#E25B34]">
-            Fried Eggs and Potatoes
-          </h3>
-
-          <p className="mt-2 text-sm leading-relaxed text-gray-500">
-            Soft poached eggs over garlicky spinach, crispy roasted
-            sweet potato wedges, creamy avocado, and warm seeded
-            sourdough.
-          </p>
-        </div>
-
-        <div className="border-t border-gray-100 pt-4">
-          <div className="mb-4">
-            <div className="mb-2 flex items-center justify-between text-xs">
-              <span className="flex items-center gap-1 font-bold text-[#52796F]">
-                <Icon
-                  icon="material-symbols:task-alt"
-                  className="text-sm"
-                />
-
-                100% Pantry Match
-              </span>
-
-              <span className="text-gray-400">
-                5 of 5 items ready
-              </span>
-            </div>
-
-            <div className="h-1.5 overflow-hidden rounded-full bg-gray-100">
-              <div className="h-full w-full rounded-full bg-[#52796F]" />
-            </div>
-          </div>
-
-          <button
-            type="button"
-            className="flex w-full items-center justify-center gap-2 rounded-full bg-[#E25B34] py-3 text-sm font-bold text-white transition hover:bg-[#601400]"
-          >
-            Make this
-
-            <Icon
-              icon="material-symbols:arrow-forward"
-              className="text-lg"
-            />
-          </button>
-        </div>
-      </div>
-    </div>
-  </div>
-</section>
+    </article>
+  ))}
+</div>
+  </section>
+)}
 
 
 <div className="mt-2 flex flex-col items-start justify-between gap-6 rounded-2xl bg-[#FFF3EC] p-6 shadow-sm md:flex-row md:items-center md:p-8">

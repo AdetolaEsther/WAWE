@@ -108,3 +108,29 @@ export const categoryIcons = {
   Extras: "fluent-emoji-flat:peanuts",
 };
 
+ export type Meal = {
+  name: string;
+  description: string;
+  whyItMatches: string;
+  cookingTime: string;
+  difficulty: "Easy" | "Medium";
+  pantryMatch: number;
+
+  imageSearchQuery: string;
+
+  image: {
+    url: string;
+    alt: string;
+    photographer: string;
+    photographerUrl: string;
+    unsplashUrl: string;
+  } | null;
+
+  ingredients: {
+    name: string;
+    amount: string;
+  }[];
+
+  missingIngredients: string[];
+  steps: string[];
+};
