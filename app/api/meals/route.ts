@@ -19,12 +19,6 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: parsed.summary }, { status: 400 });
     }
 
-    console.log(
-      "CF env:",
-      process.env.CLOUDFLARE_ACCOUNT_ID?.length,
-      process.env.CLOUDFLARE_API_TOKEN?.length,
-    );
-
     const textModel: MealModel = new AnthropicModel("claude-sonnet-4-5");
     const imageModel: ImageGenerator = new CloudflareImageGenerator();
 
