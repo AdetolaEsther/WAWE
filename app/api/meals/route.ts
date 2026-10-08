@@ -1,8 +1,16 @@
-import { GoogleModel, MealRequest, supportsImages, type MealModel } from "@/app/lib/meals";
-import { NextResponse } from "next/server";
 import { type } from "arktype";
+import { NextResponse } from "next/server";
+import {
+  AnthropicModel,
+  CloudflareImageGenerator,
+  type ImageGenerator,
+  type MealModel,
+  MealRequest,
+  type MealWithImages,
+} from "@/app/lib/meals";
 
 const IMAGE_VARIATIONS = 1;
+const IMAGES_ENABLED = true;
 
 export async function POST(request: Request) {
   try {
@@ -11,14 +19,27 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: parsed.summary }, { status: 400 });
     }
 
-    const model: MealModel = new GoogleModel("gemini-2.5-flash");
-    // const model: MealModel = new AnthropicModel("claude-sonnet-4-5");
+    console.log(
+      "CF env:",
+      process.env.CLOUDFLARE_ACCOUNT_ID?.length,
+      process.env.CLOUDFLARE_API_TOKEN?.length,
+    );
 
-    const meals = supportsImages(model)
-      ? await model.createMealsWithImages(parsed, IMAGE_VARIATIONS)
-      : await model.createMeals(parsed);
+    const textModel: MealModel = new AnthropicModel("claude-sonnet-4-5");
+    const imageModel: ImageGenerator = new CloudflareImageGenerator();
 
-    return NextResponse.json({ meals });
+    const meals = await textModel.createMeals(parsed);
+
+    const mealsWithImages: MealWithImages[] = IMAGES_ENABLED
+      ? await Promise.all(
+          meals.map(async (meal) => ({
+            ...meal,
+            images: await imageModel.generateImages(meal, IMAGE_VARIATIONS),
+          })),
+        )
+      : meals.map((meal) => ({ ...meal, images: [] }));
+
+    return NextResponse.json({ meals: mealsWithImages });
   } catch (error) {
     console.error("Meal recommendation error:", error);
     return NextResponse.json(

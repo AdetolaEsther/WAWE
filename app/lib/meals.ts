@@ -145,6 +145,10 @@ export interface ImageMealModel extends MealModel {
   createMealsWithImages(request: MealRequest, imageVariations: number): Promise<MealWithImages[]>;
 }
 
+export interface ImageGenerator {
+  generateImages(meal: GeneratedMeal, count: number): Promise<MealImage[]>;
+}
+
 export function supportsImages(model: MealModel): model is ImageMealModel {
   return typeof (model as Partial<ImageMealModel>).createMealsWithImages === "function";
 }
@@ -163,7 +167,79 @@ function parseMeals(raw: unknown): GeneratedMeal[] {
   return result.meals;
 }
 
-// Google (text + images)
+export class CloudflareImageGenerator implements ImageGenerator {
+  constructor(
+    private readonly accountId = process.env.CLOUDFLARE_ACCOUNT_ID,
+    private readonly apiToken = process.env.CLOUDFLARE_API_TOKEN,
+  ) {}
+
+  async generateImages(meal: GeneratedMeal, count: number): Promise<MealImage[]> {
+    const prompt = buildImagePrompt(meal);
+    const url = `https://api.cloudflare.com/client/v4/accounts/${this.accountId}/ai/run/@cf/black-forest-labs/flux-1-schnell`;
+
+    const styles = ["overhead shot", "close-up, 45 degree angle", "rustic table setting"];
+    const settled = await Promise.allSettled(
+      Array.from({ length: count }, async (_, i) => {
+        const res = await fetch(url, {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${this.apiToken}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ prompt: `${prompt} ${styles[i % styles.length]}.`, steps: 4 }),
+        });
+        if (!res.ok) throw new Error(`Cloudflare ${res.status}: ${await res.text()}`);
+
+        const json = (await res.json()) as { result?: { image?: string } };
+        if (!json.result?.image) throw new Error("Cloudflare returned no image.");
+
+        const image = MealImage({
+          data: json.result.image, // base64
+          mimeType: "image/jpeg",
+          alt: meal.name,
+        });
+        if (image instanceof type.errors) throw new Error(image.summary);
+        return image;
+      }),
+    );
+
+    return settled.flatMap((r) => {
+      if (r.status === "fulfilled") return [r.value];
+      console.error("Image generation failed:", r.reason);
+      return [];
+    });
+  }
+}
+
+export class PollinationsImageGenerator implements ImageGenerator {
+  async generateImages(meal: GeneratedMeal, count: number): Promise<MealImage[]> {
+    const prompt = encodeURIComponent(buildImagePrompt(meal));
+
+    const settled = await Promise.allSettled(
+      Array.from({ length: count }, async (_, i) => {
+        const res = await fetch(
+          `https://image.pollinations.ai/prompt/${prompt}?width=768&height=768&model=flux&nologo=true&seed=${i + 1}`,
+        );
+        if (!res.ok) throw new Error(`Pollinations ${res.status}`);
+
+        const image = MealImage({
+          data: Buffer.from(await res.arrayBuffer()).toString("base64"),
+          mimeType: res.headers.get("content-type")?.split(";")[0],
+          alt: meal.name,
+        });
+        if (image instanceof type.errors) throw new Error(image.summary);
+        return image;
+      }),
+    );
+
+    return settled.flatMap((r) => {
+      if (r.status === "fulfilled") return [r.value];
+      console.error("Image generation failed:", r.reason);
+      return [];
+    });
+  }
+}
+
 export class GoogleModel implements ImageMealModel {
   private readonly ai: GoogleGenAI;
 
