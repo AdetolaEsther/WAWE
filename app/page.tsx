@@ -1,6 +1,7 @@
 "use client";
 import { Icon } from "@iconify/react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import type { MealImage, MealWithImages } from "./lib/meals";
 import {
   appetiteOptions,
   categoryIcons,
@@ -8,18 +9,55 @@ import {
   goalOptions,
   hungerOptions,
   initialIngredients,
-  type Meal,
   themeColors,
 } from "./utils";
 
 type Category = keyof typeof initialIngredients;
 type PantryItem = { name: string; category: Category };
 
+// Times arrive in seconds
+const formatMinutes = (seconds: number) => {
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 60) return `${minutes} min`;
+  const hours = Math.floor(minutes / 60);
+  const rest = minutes % 60;
+  return rest ? `${hours} hr ${rest} min` : `${hours} hr`;
+};
+
+const loadingMessages = [
+  "Checking your kitchen...",
+  "Matching your cravings...",
+  "Putting your ingredients to work...",
+  "Building your plate...",
+  "Finding something delicious...",
+  "Almost there...",
+];
+
+function LoadingMessage() {
+  const [index, setIndex] = useState(0);
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setIndex((i) => (i + 1) % loadingMessages.length);
+    }, 2200);
+    return () => clearInterval(interval);
+  }, []);
+
+  return <>{loadingMessages[index]}</>;
+}
+
+const imageSrc = (image: MealImage) => `data:${image.mimeType};base64,${image.data}`;
+
+const pantryCoverage = (meal: MealWithImages) =>
+  meal.ingredients.length
+    ? Math.round(
+        (meal.ingredients.filter((i) => i.inPantry).length / meal.ingredients.length) * 100,
+      )
+    : 0;
+
 export default function Home() {
   const [activeNav, setActiveNav] = useState("discover");
-
   const [activeStep, setActiveStep] = useState(1);
-
   const [appetite, setAppetite] = useState("");
   const [hunger, setHunger] = useState("");
   const [effort, setEffort] = useState("");
@@ -70,10 +108,11 @@ export default function Home() {
       [category]: "",
     }));
   };
-  const [isFindingMeals, setIsFindingMeals] = useState(false);
-  const [meals, setMeals] = useState<Meal[]>([]);
+
+  const [meals, setMeals] = useState<MealWithImages[]>([]);
   const [showResults, setShowResults] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const isReadyToGenerate = appetite && hunger && effort && goal && selectedIngredients.length > 0;
 
@@ -81,6 +120,7 @@ export default function Home() {
     if (!isReadyToGenerate || isLoading) return;
 
     setIsLoading(true);
+    setError(null);
 
     try {
       const response = await fetch("/api/meals", {
@@ -97,15 +137,18 @@ export default function Home() {
         }),
       });
 
+      const data = await response.json().catch(() => null);
+
       if (!response.ok) {
-        throw new Error("Failed to generate meals");
+        throw new Error(data?.error ?? "Failed to generate meals");
+      }
+      if (!Array.isArray(data?.meals)) {
+        throw new Error("Unexpected response from the server.");
       }
 
-      const data = await response.json();
+      setMeals(data.meals as MealWithImages[]);
 
-      setMeals(data.meals);
-
-      // We'll use this to reveal the results section
+      // Reveal the results section
       setShowResults(true);
 
       setTimeout(() => {
@@ -114,8 +157,9 @@ export default function Home() {
           block: "start",
         });
       }, 100);
-    } catch (error) {
-      console.error("Meal generation failed:", error);
+    } catch (err) {
+      console.error("Meal generation failed:", err);
+      setError(err instanceof Error ? err.message : "Unable to generate meals right now.");
     } finally {
       setIsLoading(false);
     }
@@ -123,7 +167,6 @@ export default function Home() {
 
   const [isPantryOpen, setIsPantryOpen] = useState(false);
   const [pantrySearch, setPantrySearch] = useState("");
-  const [pantryCategory, setPantryCategory] = useState<Category>("Protein");
   const [pantryItems, setPantryItems] = useState<PantryItem[]>([
     { name: "Chicken breast", category: "Protein" },
     { name: "Eggs", category: "Protein" },
@@ -191,16 +234,6 @@ export default function Home() {
     Extras: "🍯",
   };
   const emojiFor = (category: string) => categoryEmoji[category] ?? "🍽️";
-  const loadingMessages = [
-    "Checking your kitchen...",
-    "Matching your cravings...",
-    "Putting your ingredients to work...",
-    "Building your plate...",
-    "Finding something delicious...",
-    "Almost there...",
-  ];
-
-  const [loadingMessage, setLoadingMessage] = useState(loadingMessages[0]);
   const pantryQuery = pantrySearch.trim().toLowerCase();
   const stockedNames = new Set(pantryItems.map((i) => i.name.toLowerCase()));
 
@@ -216,65 +249,23 @@ export default function Home() {
     )
     .slice(0, 12);
 
-  const handleFindMeals = async () => {
-    setIsFindingMeals(true);
-    setShowResults(false);
+  const [_selectedMeal, setSelectedMeal] = useState<MealWithImages | null>(null);
 
-    try {
-      const response = await fetch("/api/meals", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          appetite,
-          hunger,
-          effort,
-          goal,
-          ingredients: selectedIngredients,
-        }),
-      });
-
-      if (!response.ok) {
-        throw new Error("Failed to generate meals");
-      }
-
-      const data = await response.json();
-
-      setMeals(data.meals);
-      setShowResults(true);
-
-      setTimeout(() => {
-        document.getElementById("curated-results")?.scrollIntoView({ behavior: "smooth" });
-      }, 100);
-    } catch (error) {
-      console.error(error);
-    } finally {
-      setIsFindingMeals(false);
-    }
-  };
-  const [selectedMeal, setSelectedMeal] = useState<Meal | null>(null);
+  const pantryDialogRef = useRef<HTMLDialogElement>(null);
 
   useEffect(() => {
-    if (!isLoading) {
-      setLoadingMessage(loadingMessages[0]);
-      return;
-    }
+    const dialog = pantryDialogRef.current;
+    if (!dialog) return;
+    if (isPantryOpen && !dialog.open) dialog.showModal();
+    if (!isPantryOpen && dialog.open) dialog.close();
+  }, [isPantryOpen]);
 
-    let index = 0;
-
-    const interval = setInterval(() => {
-      index = (index + 1) % loadingMessages.length;
-      setLoadingMessage(loadingMessages[index]);
-    }, 2200);
-
-    return () => clearInterval(interval);
-  }, [isLoading]);
   return (
     <div className="min-h-screen">
       <nav className="sticky top-0 z-50 w-full shadow-xs bg-white/35 backdrop-blur-md">
         <div className="mx-auto flex h-16 w-full items-center justify-between px-6 lg:px-8">
           <button
+            type="button"
             onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })}
             className="flex items-center gap-3"
             aria-label="Back to top"
@@ -291,6 +282,7 @@ export default function Home() {
           <div className="flex items-center gap-4">
             <div className="hidden items-center gap-1 rounded-full bg-gray-100 p-1 lg:flex">
               <button
+                type="button"
                 onClick={() => {
                   setActiveNav("discover");
                   window.scrollTo({ top: 0, behavior: "smooth" });
@@ -323,6 +315,7 @@ export default function Home() {
               </button>
 
               <button
+                type="button"
                 onClick={() => setActiveNav("saved")}
                 className={`flex items-center gap-2 rounded-full px-4 py-2 text-sm font-medium transition ${
                   activeNav === "saved"
@@ -337,6 +330,7 @@ export default function Home() {
               </button>
 
               <button
+                type="button"
                 onClick={() => setActiveNav("preferences")}
                 className={`rounded-full px-4 py-2 text-sm font-medium transition ${
                   activeNav === "preferences"
@@ -350,6 +344,7 @@ export default function Home() {
 
             {/* Avatar */}
             <button
+              type="button"
               className="flex h-10 w-10 items-center justify-center rounded-full bg-[#E25B34] transition hover:bg-[#C94D2B]"
               aria-label="Open profile"
             >
@@ -388,11 +383,11 @@ export default function Home() {
               </div>
             </div>
             <div className="flex justify-start">
-              <div className="rotate-[-3deg] bg-white p-4 pb-16 shadow-xl">
+              <div className="-rotate-3 bg-white p-4 pb-16 shadow-xl">
                 <img
                   src="/fresh-whole-foods.jpg"
                   alt="whole-food"
-                  className="h-[480px] w-[450px] object-cover"
+                  className="h-120 w-112.5 object-cover"
                 />
               </div>
             </div>
@@ -508,7 +503,7 @@ export default function Home() {
               step="03"
               label="Kitchen Energy"
               title="How much effort are we putting in?"
-              description="Energy levels vary. We honor that."
+              description="Energy levels vary. We honour that."
               color={themeColors[2]}
             />
 
@@ -698,7 +693,6 @@ export default function Home() {
 
                             <input
                               type="text"
-                              autoFocus
                               value={searchValue}
                               onChange={(event) => handleSearchChange(category, event.target.value)}
                               onKeyDown={(event) => {
@@ -789,7 +783,6 @@ export default function Home() {
                             setAddingIngredient(false);
                           }
                         }}
-                        autoFocus
                         placeholder={`Add ${newIngredientCategory.toLowerCase()}...`}
                         className="w-full bg-transparent px-2 py-2.5 text-sm text-[#2F1400] outline-none placeholder:text-gray-400"
                       />
@@ -868,7 +861,7 @@ export default function Home() {
                   type="button"
                   disabled={!isReadyToGenerate || isLoading}
                   onClick={handleGenerateMeals}
-                  className={`mt-8 inline-flex min-w-[240px] items-center justify-center gap-3 rounded-full px-8 py-4 text-base font-bold transition-all ${
+                  className={`mt-8 inline-flex min-w-60 items-center justify-center gap-3 rounded-full px-8 py-4 text-base font-bold transition-all ${
                     isReadyToGenerate && !isLoading
                       ? "bg-[#872100] text-white shadow-md hover:bg-[#601400] hover:shadow-lg active:scale-[0.98]"
                       : "cursor-not-allowed bg-[#E8E2DD] text-[#A39A94]"
@@ -877,7 +870,7 @@ export default function Home() {
                   {isLoading ? (
                     <>
                       <Icon icon="solar:refresh-linear" className="animate-spin text-xl" />
-                      {loadingMessage}
+                      <LoadingMessage />
                     </>
                   ) : (
                     <>
@@ -892,6 +885,12 @@ export default function Home() {
                     Choose your mood, hunger, effort, goal, and at least one ingredient.
                   </p>
                 )}
+
+                {error && (
+                  <p role="alert" className="mt-4 text-sm text-red-600">
+                    {error}
+                  </p>
+                )}
               </div>
             </div>
           </div>
@@ -899,100 +898,86 @@ export default function Home() {
 
         {showResults && (
           <>
-            {showResults && (
-              <section id="curated-results" className="flex flex-col gap-8 px-6 pb-20 pt-12">
-                <div>
-                  <p className="text-sm font-semibold uppercase tracking-widest text-[#E25B34]">
-                    Your kitchen, your options
-                  </p>
+            <section id="curated-results" className="flex flex-col gap-8 px-6 pb-20 pt-12">
+              <div>
+                <p className="text-sm font-semibold uppercase tracking-widest text-[#E25B34]">
+                  Your kitchen, your options
+                </p>
 
-                  <h2 className="mt-2 text-3xl font-bold text-[#2F1400]">
-                    Here’s what you can eat.
-                  </h2>
+                <h2 className="mt-2 text-3xl font-bold text-[#2F1400]">Here’s what you can eat.</h2>
 
-                  <p className="mt-2 text-sm text-gray-500">
-                    Four ideas based on what you’re craving and what you already have.
-                  </p>
-                </div>
+                <p className="mt-2 text-sm text-gray-500">
+                  Four ideas based on what you’re craving and what you already have.
+                </p>
+              </div>
 
-                <div className="grid gap-6 md:grid-cols-2">
-                  {meals.map((meal) => (
-                    <article
-                      key={meal.name}
-                      className="overflow-hidden rounded-3xl border border-gray-100 bg-white shadow-sm"
-                    >
-                      {/* Meal Image */}
-                      {meal.image && (
-                        <div className="relative h-64 overflow-hidden">
-                          <img
-                            src={meal.image.url}
-                            alt={meal.image.alt || meal.name}
-                            className="h-full w-full object-cover"
-                          />
-
-                          {/* Unsplash Attribution */}
-                          <div className="absolute bottom-0 left-0 right-0 bg-black/40 px-4 py-2">
-                            <p className="text-xs text-white">
-                              Photo by{" "}
-                              <a
-                                href={meal.image.photographerUrl}
-                                target="_blank"
-                                rel="noreferrer"
-                                className="underline"
-                              >
-                                {meal.image.photographer}
-                              </a>{" "}
-                              on{" "}
-                              <a
-                                href={meal.image.unsplashUrl}
-                                target="_blank"
-                                rel="noreferrer"
-                                className="underline"
-                              >
-                                Unsplash
-                              </a>
-                            </p>
-                          </div>
-                        </div>
-                      )}
-
-                      {/* Meal Content */}
-                      <div className="p-6">
-                        <div className="flex items-center justify-between">
-                          <span className="rounded-full bg-[#FFF3EC] px-3 py-1 text-xs font-semibold text-[#E25B34]">
-                            {meal.pantryMatch}% pantry match
-                          </span>
-
-                          <span className="text-sm text-gray-400">{meal.cookingTime}</span>
-                        </div>
-
-                        <h3 className="mt-5 text-xl font-bold text-[#2F1400]">{meal.name}</h3>
-
-                        <p className="mt-2 text-sm leading-6 text-gray-500">{meal.description}</p>
-
-                        <div className="mt-5 flex flex-wrap gap-2">
-                          <span className="rounded-full bg-gray-100 px-3 py-1.5 text-xs font-medium">
-                            {meal.difficulty}
-                          </span>
-
-                          <span className="rounded-full bg-gray-100 px-3 py-1.5 text-xs font-medium">
-                            {meal.cookingTime}
-                          </span>
-                        </div>
-
-                        <button
-                          type="button"
-                          onClick={() => setSelectedMeal(meal)}
-                          className="mt-6 w-full rounded-full bg-[#872100] px-5 py-3 text-sm font-semibold text-white transition hover:bg-[#601400]"
-                        >
-                          Make this
-                        </button>
+              <div className="grid gap-6 md:grid-cols-2">
+                {meals.map((meal) => (
+                  <article
+                    key={`${meal.name}`}
+                    className="overflow-hidden rounded-3xl border border-gray-100 bg-white shadow-sm"
+                  >
+                    {/* Meal Image (placeholder when generation failed or returned nothing) */}
+                    {meal.images.length > 0 ? (
+                      <div className="h-64 overflow-hidden">
+                        <img
+                          src={imageSrc(meal.images[0])}
+                          alt={meal.images[0].alt ?? meal.name}
+                          className="h-full w-full object-cover"
+                        />
                       </div>
-                    </article>
-                  ))}
-                </div>
-              </section>
-            )}
+                    ) : (
+                      <div className="flex h-64 items-center justify-center bg-[#FFF3EC] text-5xl">
+                        🍽️
+                      </div>
+                    )}
+
+                    {/* Meal Content */}
+                    <div className="p-6">
+                      <div className="flex items-center justify-between">
+                        <span className="rounded-full bg-[#FFF3EC] px-3 py-1 text-xs font-semibold text-[#E25B34]">
+                          {pantryCoverage(meal)}% pantry match
+                        </span>
+
+                        <span className="text-sm text-gray-400">
+                          {formatMinutes(meal.prepTime + meal.cookingTime)}
+                        </span>
+                      </div>
+
+                      <h3 className="mt-5 text-xl font-bold text-[#2F1400]">{meal.name}</h3>
+
+                      <p className="mt-2 text-sm leading-6 text-gray-500">{meal.description}</p>
+
+                      <p className="mt-3 text-sm italic leading-6 text-[#6F5143]">
+                        {meal.whyItMatches}
+                      </p>
+
+                      <div className="mt-5 flex flex-wrap gap-2">
+                        <span className="rounded-full bg-gray-100 px-3 py-1.5 text-xs font-medium">
+                          {meal.difficulty}
+                        </span>
+
+                        <span className="rounded-full bg-gray-100 px-3 py-1.5 text-xs font-medium">
+                          Prep {formatMinutes(meal.prepTime)}
+                        </span>
+
+                        <span className="rounded-full bg-gray-100 px-3 py-1.5 text-xs font-medium">
+                          Cook {formatMinutes(meal.cookingTime)}
+                        </span>
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={() => setSelectedMeal(meal)}
+                        className="mt-6 w-full rounded-full bg-[#872100] px-5 py-3 text-sm font-semibold text-white transition hover:bg-[#601400]"
+                      >
+                        Make this
+                      </button>
+                    </div>
+                  </article>
+                ))}
+              </div>
+            </section>
 
             <div className="mt-2 flex flex-col items-start justify-between gap-6 rounded-2xl bg-[#FFF3EC] p-6 shadow-sm md:flex-row md:items-center md:p-8">
               <div className="flex max-w-2xl flex-col gap-2">
@@ -1024,252 +1009,254 @@ export default function Home() {
         )}
 
         {isPantryOpen && (
-          <div
-            className="fixed inset-0 z-[100] flex items-center justify-center overflow-y-auto bg-[#1C1C19]/55 p-4 backdrop-blur-[6px] sm:p-6"
-            onClick={() => setIsPantryOpen(false)}
+          <dialog
+            ref={pantryDialogRef}
+            onClose={() => setIsPantryOpen(false)} // fires on Escape, too
+            onClick={(event) => {
+              if (event.target === event.currentTarget) setIsPantryOpen(false);
+            }}
+            onKeyDown={(event) => {
+              if (event.key === "Escape") setIsPantryOpen(false);
+            }}
+            className="m-auto w-full max-w-2xl overflow-hidden rounded-3xl border border-[#EBDCD0] bg-white p-0 shadow-[0_20px_50px_rgba(74,66,61,0.22)] backdrop:bg-[#1C1C19]/55 backdrop:backdrop-blur-[6px]"
           >
-            <div
-              className="relative my-auto flex w-full max-w-2xl flex-col overflow-hidden rounded-3xl border border-[#EBDCD0] bg-white shadow-[0_20px_50px_rgba(74,66,61,0.22)]"
-              onClick={(event) => event.stopPropagation()}
-            >
-              <div className="flex items-start justify-between gap-4 border-b border-[#EBE8E3] bg-gradient-to-b from-[#F6F3EE]/60 to-transparent p-6 pb-4 sm:p-8 sm:pb-5">
-                <div className="flex items-start gap-3.5">
-                  <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-[#FFDCC4] text-2xl text-[#8E4E14] shadow-sm">
-                    🥫
-                  </div>
-
-                  <div>
-                    <div className="flex flex-wrap items-center gap-2">
-                      <h3 className="text-xl font-bold tracking-tight text-[#1C1C19]">
-                        Stock Your Pantry
-                      </h3>
-                      <span className="rounded-full bg-[#FFDCC4] px-2 py-0.5 text-[11px] font-bold uppercase tracking-wider text-[#6F3800]">
-                        Kitchen Hub
-                      </span>
-                    </div>
-
-                    <p className="mt-1 text-[13px] leading-5 text-[#59413B]">
-                      Keep track of whole food staples, produce, and fridge favorites so you never
-                      wonder what to cook.
-                    </p>
-                  </div>
+            <div className="flex items-start justify-between gap-4 border-b border-[#EBE8E3] bg-gradient-to-b from-[#F6F3EE]/60 to-transparent p-6 pb-4 sm:p-8 sm:pb-5">
+              <div className="flex items-start gap-3.5">
+                <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-[#FFDCC4] text-2xl text-[#8E4E14] shadow-sm">
+                  🥫
                 </div>
 
-                <button
-                  type="button"
-                  onClick={() => setIsPantryOpen(false)}
-                  aria-label="Close pantry"
-                  className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[#F0EDE9] text-[#59413B] transition-colors hover:bg-[#EBE8E3] hover:text-[#1C1C19]"
-                >
-                  <Icon icon="material-symbols:close" className="text-xl" />
-                </button>
+                <div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <h3 className="text-xl font-bold tracking-tight text-[#1C1C19]">
+                      Stock Your Pantry
+                    </h3>
+                    <span className="rounded-full bg-[#FFDCC4] px-2 py-0.5 text-[11px] font-bold uppercase tracking-wider text-[#6F3800]">
+                      Kitchen Hub
+                    </span>
+                  </div>
+
+                  <p className="mt-1 text-[13px] leading-5 text-[#59413B]">
+                    Keep track of whole food staples, produce, and fridge favorites so you never
+                    wonder what to cook.
+                  </p>
+                </div>
               </div>
 
-              <div className="flex max-h-[70vh] flex-col gap-6 overflow-y-auto p-6 sm:p-8">
-                <div>
-                  <div className="flex items-center gap-2 rounded-full border border-[#EBE8E3] bg-[#F6F3EE] p-1.5 pl-4 shadow-inner transition-all focus-within:border-[#A8320D]">
-                    <Icon icon="material-symbols:search" className="text-[22px] text-[#59413B]" />
+              <button
+                type="button"
+                onClick={() => setIsPantryOpen(false)}
+                aria-label="Close pantry"
+                className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[#F0EDE9] text-[#59413B] transition-colors hover:bg-[#EBE8E3] hover:text-[#1C1C19]"
+              >
+                <Icon icon="material-symbols:close" className="text-xl" />
+              </button>
+            </div>
 
-                    <input
-                      value={pantrySearch}
-                      onChange={(event) => setPantrySearch(event.target.value)}
-                      onKeyDown={(event) => {
-                        if (event.key === "Enter") handleAddToPantry();
-                      }}
-                      placeholder="Search ingredients or type your own (e.g., tahini, bell pepper)..."
-                      className="w-full bg-transparent text-[15px] text-[#1C1C19] outline-none placeholder:text-[#59413B]/70"
-                    />
+            <div className="flex max-h-[70vh] flex-col gap-6 overflow-y-auto p-6 sm:p-8">
+              <div>
+                <div className="flex items-center gap-2 rounded-full border border-[#EBE8E3] bg-[#F6F3EE] p-1.5 pl-4 shadow-inner transition-all focus-within:border-[#A8320D]">
+                  <Icon icon="material-symbols:search" className="text-[22px] text-[#59413B]" />
 
-                    <button
-                      type="button"
-                      onClick={handleAddToPantry}
-                      disabled={!pantrySearch.trim()}
-                      className="flex shrink-0 items-center gap-1.5 rounded-full bg-[#A8320D] px-5 py-2 text-[13px] font-semibold text-white shadow-sm transition-all hover:bg-[#CA4A24] active:scale-95 disabled:cursor-not-allowed disabled:opacity-40"
-                    >
-                      <Icon icon="material-symbols:add" className="text-lg" />
-                      Add
-                    </button>
-                  </div>
+                  <input
+                    value={pantrySearch}
+                    onChange={(event) => setPantrySearch(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter") handleAddToPantry();
+                    }}
+                    placeholder="Search ingredients or type your own (e.g., tahini, bell pepper)..."
+                    className="w-full bg-transparent text-[15px] text-[#1C1C19] outline-none placeholder:text-[#59413B]/70"
+                  />
 
-                  {pantrySearch.trim() && (
-                    <p className="mt-2 pl-4 text-xs text-[#59413B]">
-                      {matchedCatalogItem ? (
-                        <>
-                          Will be added under{" "}
-                          <span className="font-semibold text-[#A8320D]">
-                            {matchedCatalogItem.category}
-                          </span>
-                        </>
-                      ) : pantryTab === "All" ? (
-                        <>
-                          Custom item, goes under{" "}
-                          <span className="font-semibold text-[#A8320D]">Extras</span>. Pick a
-                          category below to change it.
-                        </>
-                      ) : (
-                        <>
-                          Will be added under{" "}
-                          <span className="font-semibold text-[#A8320D]">{pantryTab}</span>
-                        </>
-                      )}
-                    </p>
-                  )}
+                  <button
+                    type="button"
+                    onClick={handleAddToPantry}
+                    disabled={!pantrySearch.trim()}
+                    className="flex shrink-0 items-center gap-1.5 rounded-full bg-[#A8320D] px-5 py-2 text-[13px] font-semibold text-white shadow-sm transition-all hover:bg-[#CA4A24] active:scale-95 disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    <Icon icon="material-symbols:add" className="text-lg" />
+                    Add
+                  </button>
                 </div>
 
-                <div className="flex flex-col gap-2">
-                  <span className="text-[11px] font-bold uppercase tracking-wider text-[#8E4E14]">
-                    Browse by Category
-                  </span>
+                {pantrySearch.trim() && (
+                  <p className="mt-2 pl-4 text-xs text-[#59413B]">
+                    {matchedCatalogItem ? (
+                      <>
+                        Will be added under{" "}
+                        <span className="font-semibold text-[#A8320D]">
+                          {matchedCatalogItem.category}
+                        </span>
+                      </>
+                    ) : pantryTab === "All" ? (
+                      <>
+                        Custom item, goes under{" "}
+                        <span className="font-semibold text-[#A8320D]">Extras</span>. Pick a
+                        category below to change it.
+                      </>
+                    ) : (
+                      <>
+                        Will be added under{" "}
+                        <span className="font-semibold text-[#A8320D]">{pantryTab}</span>
+                      </>
+                    )}
+                  </p>
+                )}
+              </div>
 
-                  <div className="flex items-center gap-2 overflow-x-auto pb-1">
-                    {(["All", ...pantryCategories] as Array<Category | "All">).map((tab) => (
+              <div className="flex flex-col gap-2">
+                <span className="text-[11px] font-bold uppercase tracking-wider text-[#8E4E14]">
+                  Browse by Category
+                </span>
+
+                <div className="flex items-center gap-2 overflow-x-auto pb-1">
+                  {(["All", ...pantryCategories] as Array<Category | "All">).map((tab) => (
+                    <button
+                      key={tab}
+                      type="button"
+                      onClick={() => setPantryTab(tab)}
+                      className={`shrink-0 rounded-full px-3.5 py-1.5 text-[11px] font-bold transition-all ${
+                        pantryTab === tab
+                          ? "bg-[#A8320D] text-white shadow-sm"
+                          : "bg-[#F6F3EE] text-[#59413B] hover:bg-[#F0EDE9]"
+                      }`}
+                    >
+                      {tab === "All" ? "All" : `${emojiFor(tab)} ${tab}`}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="flex flex-col gap-2.5">
+                <div className="flex items-center justify-between">
+                  <span className="text-[11px] font-bold uppercase tracking-wider text-[#59413B]">
+                    {pantryQuery ? "Matches" : "Popular Whole-Food Staples"}
+                  </span>
+                  <span className="text-xs text-[#59413B]">Tap to add quickly</span>
+                </div>
+
+                {suggestions.length > 0 ? (
+                  <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+                    {suggestions.map((item) => (
                       <button
-                        key={tab}
+                        key={`${item.category}-${item.name}`}
                         type="button"
-                        onClick={() => setPantryTab(tab)}
-                        className={`shrink-0 rounded-full px-3.5 py-1.5 text-[11px] font-bold transition-all ${
-                          pantryTab === tab
-                            ? "bg-[#A8320D] text-white shadow-sm"
-                            : "bg-[#F6F3EE] text-[#59413B] hover:bg-[#F0EDE9]"
-                        }`}
+                        onClick={() => addPantryItem(item)}
+                        className="group flex items-center justify-between rounded-xl border border-transparent bg-[#F6F3EE] p-2.5 text-left transition-all hover:border-[#FFDCC4] hover:bg-[#FFDCC4]/30"
                       >
-                        {tab === "All" ? "All" : `${emojiFor(tab)} ${tab}`}
+                        <span className="flex items-center gap-1.5 text-[11px] font-bold text-[#1C1C19] group-hover:text-[#8E4E14]">
+                          <span>{emojiFor(item.category)}</span>
+                          {item.name}
+                        </span>
+                        <Icon
+                          icon="material-symbols:add"
+                          className="text-lg text-[#59413B] group-hover:text-[#8E4E14]"
+                        />
                       </button>
                     ))}
                   </div>
-                </div>
-
-                <div className="flex flex-col gap-2.5">
-                  <div className="flex items-center justify-between">
-                    <span className="text-[11px] font-bold uppercase tracking-wider text-[#59413B]">
-                      {pantryQuery ? "Matches" : "Popular Whole-Food Staples"}
-                    </span>
-                    <span className="text-xs text-[#59413B]">Tap to add quickly</span>
-                  </div>
-
-                  {suggestions.length > 0 ? (
-                    <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-                      {suggestions.map((item) => (
-                        <button
-                          key={`${item.category}-${item.name}`}
-                          type="button"
-                          onClick={() => addPantryItem(item)}
-                          className="group flex items-center justify-between rounded-xl border border-transparent bg-[#F6F3EE] p-2.5 text-left transition-all hover:border-[#FFDCC4] hover:bg-[#FFDCC4]/30"
-                        >
-                          <span className="flex items-center gap-1.5 text-[11px] font-bold text-[#1C1C19] group-hover:text-[#8E4E14]">
-                            <span>{emojiFor(item.category)}</span>
-                            {item.name}
-                          </span>
-                          <Icon
-                            icon="material-symbols:add"
-                            className="text-lg text-[#59413B] group-hover:text-[#8E4E14]"
-                          />
-                        </button>
-                      ))}
-                    </div>
-                  ) : (
-                    <p className="rounded-xl bg-[#F6F3EE] px-4 py-3 text-xs text-[#59413B]">
-                      {pantryQuery
-                        ? "Nothing in the catalog matches. Press Add to stock it as your own item."
-                        : "Everything in this category is already in your pantry."}
-                    </p>
-                  )}
-                </div>
-                <div className="flex flex-col gap-3 rounded-2xl border border-[#F0EDE9] bg-[#F6F3EE]/70 p-4">
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <div className="flex items-center gap-2">
-                      <Icon icon="material-symbols:shelves" className="text-xl text-[#A8320D]" />
-                      <span className="text-[13px] font-semibold text-[#1C1C19]">
-                        Items Currently Stocked
-                      </span>
-                      <span className="rounded-full bg-[#FFDBD1] px-2 py-0.5 text-[11px] font-bold text-[#872100]">
-                        {pantryItems.length} {pantryItems.length === 1 ? "item" : "items"} in pantry
-                      </span>
-                    </div>
-
-                    {pantryItems.length > 0 && (
-                      <button
-                        type="button"
-                        onClick={() => setPantryItems([])}
-                        className="text-[11px] text-[#59413B] underline transition-colors hover:text-[#BA1A1A]"
-                      >
-                        Clear all
-                      </button>
-                    )}
-                  </div>
-
-                  {pantryItems.length > 0 ? (
-                    <div className="flex flex-col gap-4 pt-1">
-                      {pantryCategories.map((category) => {
-                        const items = pantryItems.filter((item) => item.category === category);
-                        if (items.length === 0) return null;
-
-                        return (
-                          <div key={category}>
-                            <p className="mb-2 flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider text-[#59413B]">
-                              <span>{emojiFor(category)}</span>
-                              {category}
-                              <span className="font-normal normal-case text-[#59413B]/60">
-                                ({items.length})
-                              </span>
-                            </p>
-
-                            <div className="flex flex-wrap gap-2">
-                              {items.map((item) => (
-                                <span
-                                  key={item.name}
-                                  className="inline-flex items-center gap-1.5 rounded-full border border-[#EBE8E3] bg-white px-3 py-1 text-[11px] font-bold text-[#1C1C19] shadow-sm"
-                                >
-                                  {item.name}
-                                  <button
-                                    type="button"
-                                    onClick={() =>
-                                      setPantryItems((current) =>
-                                        current.filter((p) => p.name !== item.name),
-                                      )
-                                    }
-                                    aria-label={`Remove ${item.name}`}
-                                    className="ml-0.5 flex items-center text-[#59413B] transition-colors hover:text-[#BA1A1A]"
-                                  >
-                                    <Icon icon="material-symbols:close" className="text-sm" />
-                                  </button>
-                                </span>
-                              ))}
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  ) : (
-                    <div className="rounded-2xl border border-dashed border-[#E0BFB7] bg-white/60 px-6 py-8 text-center">
-                      <p className="font-semibold text-[#1C1C19]">Your pantry is empty</p>
-                      <p className="mt-1 text-sm text-[#59413B]">
-                        Tap a staple above or type your own to get started.
-                      </p>
-                    </div>
-                  )}
-                </div>
+                ) : (
+                  <p className="rounded-xl bg-[#F6F3EE] px-4 py-3 text-xs text-[#59413B]">
+                    {pantryQuery
+                      ? "Nothing in the catalog matches. Press Add to stock it as your own item."
+                      : "Everything in this category is already in your pantry."}
+                  </p>
+                )}
               </div>
-              <div className="flex flex-col-reverse items-center justify-between gap-3 border-t border-[#F0EDE9] bg-white p-5 sm:flex-row sm:px-8">
-                <div className="flex items-center gap-1 text-[11px] font-bold text-[#59413B]">
-                  <Icon
-                    icon="material-symbols:sync-saved-locally-outline"
-                    className="text-base text-[#3D635A]"
-                  />
-                  Changes apply as you add them
+              <div className="flex flex-col gap-3 rounded-2xl border border-[#F0EDE9] bg-[#F6F3EE]/70 p-4">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex items-center gap-2">
+                    <Icon icon="material-symbols:shelves" className="text-xl text-[#A8320D]" />
+                    <span className="text-[13px] font-semibold text-[#1C1C19]">
+                      Items Currently Stocked
+                    </span>
+                    <span className="rounded-full bg-[#FFDBD1] px-2 py-0.5 text-[11px] font-bold text-[#872100]">
+                      {pantryItems.length} {pantryItems.length === 1 ? "item" : "items"} in pantry
+                    </span>
+                  </div>
+
+                  {pantryItems.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => setPantryItems([])}
+                      className="text-[11px] text-[#59413B] underline transition-colors hover:text-[#BA1A1A]"
+                    >
+                      Clear all
+                    </button>
+                  )}
                 </div>
 
-                <button
-                  type="button"
-                  onClick={() => setIsPantryOpen(false)}
-                  className="flex w-full items-center justify-center gap-2 rounded-full bg-[#A8320D] px-6 py-2.5 text-base font-bold text-white shadow-[0_4px_16px_rgba(168,50,13,0.3)] transition-all hover:scale-105 hover:bg-[#CA4A24] active:scale-95 sm:w-auto"
-                >
-                  Done ({pantryItems.length} {pantryItems.length === 1 ? "item" : "items"})
-                  <Icon icon="material-symbols:check" className="text-lg" />
-                </button>
+                {pantryItems.length > 0 ? (
+                  <div className="flex flex-col gap-4 pt-1">
+                    {pantryCategories.map((category) => {
+                      const items = pantryItems.filter((item) => item.category === category);
+                      if (items.length === 0) return null;
+
+                      return (
+                        <div key={category}>
+                          <p className="mb-2 flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider text-[#59413B]">
+                            <span>{emojiFor(category)}</span>
+                            {category}
+                            <span className="font-normal normal-case text-[#59413B]/60">
+                              ({items.length})
+                            </span>
+                          </p>
+
+                          <div className="flex flex-wrap gap-2">
+                            {items.map((item) => (
+                              <span
+                                key={item.name}
+                                className="inline-flex items-center gap-1.5 rounded-full border border-[#EBE8E3] bg-white px-3 py-1 text-[11px] font-bold text-[#1C1C19] shadow-sm"
+                              >
+                                {item.name}
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    setPantryItems((current) =>
+                                      current.filter((p) => p.name !== item.name),
+                                    )
+                                  }
+                                  aria-label={`Remove ${item.name}`}
+                                  className="ml-0.5 flex items-center text-[#59413B] transition-colors hover:text-[#BA1A1A]"
+                                >
+                                  <Icon icon="material-symbols:close" className="text-sm" />
+                                </button>
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <div className="rounded-2xl border border-dashed border-[#E0BFB7] bg-white/60 px-6 py-8 text-center">
+                    <p className="font-semibold text-[#1C1C19]">Your pantry is empty</p>
+                    <p className="mt-1 text-sm text-[#59413B]">
+                      Tap a staple above or type your own to get started.
+                    </p>
+                  </div>
+                )}
               </div>
             </div>
-          </div>
+            <div className="flex flex-col-reverse items-center justify-between gap-3 border-t border-[#F0EDE9] bg-white p-5 sm:flex-row sm:px-8">
+              <div className="flex items-center gap-1 text-[11px] font-bold text-[#59413B]">
+                <Icon
+                  icon="material-symbols:sync-saved-locally-outline"
+                  className="text-base text-[#3D635A]"
+                />
+                Changes apply as you add them
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setIsPantryOpen(false)}
+                className="flex w-full items-center justify-center gap-2 rounded-full bg-[#A8320D] px-6 py-2.5 text-base font-bold text-white shadow-[0_4px_16px_rgba(168,50,13,0.3)] transition-all hover:scale-105 hover:bg-[#CA4A24] active:scale-95 sm:w-auto"
+              >
+                Done ({pantryItems.length} {pantryItems.length === 1 ? "item" : "items"})
+                <Icon icon="material-symbols:check" className="text-lg" />
+              </button>
+            </div>
+          </dialog>
         )}
       </main>
     </div>
